@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  DEPLOY_DIR: /home/${{ secrets.SERVER_USER }}/ai   # 홈 디렉토리 기준으로 수정
+  DEPLOY_DIR: /home/${{ secrets.SERVER_USER }}/masil
 
 jobs:
   rsync-build-up:
