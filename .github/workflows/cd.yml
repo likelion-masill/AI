@@ -38,7 +38,9 @@ jobs:
             --exclude '.git' \
             --filter='protect docker-compose.yml' \
             --filter='protect Dockerfile' \
+            --filter='protect .env' \
             ./ ${USER}@${HOST}:${DEPLOY_DIR}/
+
 
       - name: Build & Up on server
         env:
