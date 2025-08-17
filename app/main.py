@@ -1,7 +1,7 @@
 # app/main.py
 from fastapi import FastAPI
-from app.routers.summarize import router as summarize_router
-from app.routers.health import router as health_router
+from app.routers.summarize_router import router as summarize_router
+from app.routers.health_router import router as health_router
 
 app = FastAPI(title="Summarizer API", version="0.1.0")
 
