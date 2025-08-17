@@ -40,11 +40,12 @@ jobs:
         env:
           HOST: ${{ secrets.SSH_HOST }}
           USER: ${{ secrets.SERVER_USER }}
+          DEPLOY_DIR: ${{ env.DEPLOY_DIR }}
         run: |
-          ssh ${USER}@${HOST} << 'EOF'
-          set -e
-          cd ${DEPLOY_DIR}
-          docker compose build --pull
-          docker compose up -d
-          docker image prune -f
-          EOF
+          ssh ${USER}@${HOST} "
+            set -e
+            cd ${DEPLOY_DIR}
+            docker compose build --pull
+            docker compose up -d
+            docker image prune -f
+          "
