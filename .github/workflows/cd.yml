@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  DEPLOY_DIR: /home/${{ secrets.SERVER_USER }}/masil
+  DEPLOY_DIR: /home/${{ secrets.SERVER_USER }}/masill
 
 jobs:
   rsync-build-up:
