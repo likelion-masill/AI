@@ -46,24 +46,25 @@ jobs:
             set -euxo pipefail
             echo '== DEPLOY_DIR =='; echo ${DEPLOY_DIR}
             echo '== ls DEPLOY_DIR =='; ls -al ${DEPLOY_DIR}
-            # compose 파일 절대경로로 고정
+      
+            # compose 파일 절대경로 설정 (원격에서 확장되도록 \$ 사용)
             COMPOSE_FILE=${DEPLOY_DIR}/docker-compose.yml
-            if [ ! -f \"${COMPOSE_FILE}\" ]; then
-              # 대안 파일명도 체크
+            if [ ! -f \"\${COMPOSE_FILE}\" ]; then
               if [ -f \"${DEPLOY_DIR}/compose.yaml\" ]; then
                 COMPOSE_FILE=${DEPLOY_DIR}/compose.yaml
-              elif [ -f \"${DEPLOY_DIR}/docker-compose.yml\" ]; then
-                COMPOSE_FILE=${DEPLOY_DIR}/docker-composee.yml
+              elif [ -f \"${DEPLOY_DIR}/docker-composer.yml\" ]; then
+                COMPOSE_FILE=${DEPLOY_DIR}/docker-composer.yml
               else
-                echo 'ERROR: compose 파일을 찾지 못했습니다.'
-                echo '== 트리 출력 =='; ls -R ${DEPLOY_DIR}
+                echo 'ERROR: compose 파일 없음'
+                ls -R ${DEPLOY_DIR}
                 exit 1
               fi
             fi
-            echo Using compose file: ${COMPOSE_FILE}
+      
+            echo Using compose file: \${COMPOSE_FILE}
             docker compose version
-            docker compose -f ${COMPOSE_FILE} config >/dev/null
-            docker compose -f ${COMPOSE_FILE} build --pull
-            docker compose -f ${COMPOSE_FILE} up -d
+            docker compose -f \${COMPOSE_FILE} config >/dev/null
+            docker compose -f \${COMPOSE_FILE} build --pull
+            docker compose -f \${COMPOSE_FILE} up -d
             docker image prune -f
           "
