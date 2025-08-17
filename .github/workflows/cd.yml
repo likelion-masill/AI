@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  DEPLOY_DIR: /srv/ai
+  DEPLOY_DIR: /home/${{ secrets.SERVER_USER }}/ai   # 홈 디렉토리 기준으로 수정
 
 jobs:
   rsync-build-up:
@@ -33,7 +33,8 @@ jobs:
           HOST: ${{ secrets.SSH_HOST }}
           USER: ${{ secrets.SERVER_USER }}
         run: |
-          rsync -avr --delete --exclude '.git' ./ ${USER}@${HOST}:${{ env.DEPLOY_DIR }}/
+          ssh ${USER}@${HOST} "mkdir -p ${DEPLOY_DIR}"
+          rsync -avr --delete --exclude '.git' ./ ${USER}@${HOST}:${DEPLOY_DIR}/
 
       - name: Build & Up on server
         env:
