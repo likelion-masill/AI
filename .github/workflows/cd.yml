@@ -52,8 +52,8 @@ jobs:
               # 대안 파일명도 체크
               if [ -f \"${DEPLOY_DIR}/compose.yaml\" ]; then
                 COMPOSE_FILE=${DEPLOY_DIR}/compose.yaml
-              elif [ -f \"${DEPLOY_DIR}/docker-composer.yml\" ]; then
-                COMPOSE_FILE=${DEPLOY_DIR}/docker-composer.yml
+              elif [ -f \"${DEPLOY_DIR}/docker-compose.yml\" ]; then
+                COMPOSE_FILE=${DEPLOY_DIR}/docker-composee.yml
               else
                 echo 'ERROR: compose 파일을 찾지 못했습니다.'
                 echo '== 트리 출력 =='; ls -R ${DEPLOY_DIR}
