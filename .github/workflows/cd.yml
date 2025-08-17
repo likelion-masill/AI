@@ -34,7 +34,11 @@ jobs:
           USER: ${{ secrets.SERVER_USER }}
         run: |
           ssh ${USER}@${HOST} "mkdir -p ${DEPLOY_DIR}"
-          rsync -avr --delete --exclude '.git' ./ ${USER}@${HOST}:${DEPLOY_DIR}/
+          rsync -avr --delete \
+            --exclude '.git' \
+            --filter='protect docker-compose.yml' \
+            --filter='protect Dockerfile' \
+            ./ ${USER}@${HOST}:${DEPLOY_DIR}/
 
       - name: Build & Up on server
         env:
