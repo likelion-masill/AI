@@ -1,0 +1,49 @@
+name: CD - Build on Server (no registry)
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+  DEPLOY_DIR: /srv/ai
+
+jobs:
+  rsync-build-up:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          printf "Host *\n  StrictHostKeyChecking no\n" >> ~/.ssh/config
+
+      - name: Install rsync
+        run: sudo apt-get update && sudo apt-get install -y rsync
+
+      - name: Sync source -> server
+        env:
+          HOST: ${{ secrets.SSH_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+        run: |
+          rsync -avr --delete --exclude '.git' ./ ${USER}@${HOST}:${{ env.DEPLOY_DIR }}/
+
+      - name: Build & Up on server
+        env:
+          HOST: ${{ secrets.SSH_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+        run: |
+          ssh ${USER}@${HOST} << 'EOF'
+          set -e
+          cd ${DEPLOY_DIR}
+          docker compose build --pull
+          docker compose up -d
+          docker image prune -f
+          EOF
