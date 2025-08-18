@@ -67,7 +67,7 @@ def refine_gpt(draft: str, temperature: float = 0.3, max_tokens: int = 300) -> s
         "2) 텍스트에 명시되지 않은 정보는 절대 추가하지 말고, 아예 출력하지 마라.\n"
         "3) '미제공/null/없음' 같은 자리채움 문구는 쓰지 마라.\n"
         "4) 중복·군더더기는 제거하고, 간결하게 요약한다.\n\n"
-        "[텍스트]\n{text}"
+        "[텍스트]\n{draft}"
     )
 
 
