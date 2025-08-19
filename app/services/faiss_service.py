@@ -133,3 +133,28 @@ class FaissService:
                 self.save_index()
 
         return {"loaded": count, "ntotal": count}
+
+    # 현재 메모리 상 인덱스에서 모든 ID 가져오기
+    def get_ids_memory(self) -> List[int]:
+        with self._lock:
+            if self.ntotal == 0:
+                return []
+            try:
+                # IndexIDMap2의 id_map(std::vector) -> numpy로
+                ids = faiss.vector_to_array(self._index.id_map)
+            except AttributeError:
+                # 혹시 구현 차이로 속성이 다를 경우 대비
+                return []
+            return ids.astype("int64").tolist()
+
+    # 디스크에 저장된 인덱스 파일에서 모든 ID 가져오기
+    def get_ids_from_disk(self) -> List[int]:
+        with self._lock:
+            if not os.path.exists(self.index_path):
+                return []
+            idx = faiss.read_index(self.index_path)
+        try:
+            ids = faiss.vector_to_array(idx.id_map)
+            return ids.astype("int64").tolist()
+        except AttributeError:
+            return []

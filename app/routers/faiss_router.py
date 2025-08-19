@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, Body
 from typing import Literal
 from app.schemas.faiss_schema import (
-    FaissUpsertRequest, FaissUpsertResponse,
-    FaissReloadResponse, FaissStatsResponse, FaissRemoveResponse
+    FaissUpsertRequest, FaissUpsertResponse, FaissReloadResponse,
+    FaissStatsResponse, FaissRemoveResponse, FaissListResponse
 )
 import json
 from app.services.faiss_service import FaissService
@@ -113,3 +113,35 @@ async def remove(post_id: int, svc: FaissService = Depends(get_faiss)):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"remove failed: {e}")
+
+@router.get(
+    "/ids",
+    response_model=CommonResponse[FaissListResponse],
+    tags=["faiss"]
+)
+async def list_ids(
+    source: Literal["memory", "disk"] = Query("memory", description="조회 대상: memory 또는 disk"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(1000, gt=0),
+    svc: FaissService = Depends(get_faiss),
+):
+    try:
+        if source == "disk":
+            ids = svc.get_ids_from_disk()
+            ntotal = len(ids)
+        else:
+            ids = svc.get_ids_memory()
+            ntotal = svc.ntotal
+
+        sliced = ids[offset: offset + limit]
+        return CommonResponse(
+            status="success",
+            data=FaissListResponse(
+                dim=svc.dim,
+                ntotal=ntotal,
+                ids=sliced,
+                source=source
+            )
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"list ids failed: {e}")

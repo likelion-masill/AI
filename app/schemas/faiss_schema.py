@@ -23,3 +23,9 @@ class FaissStatsResponse(BaseModel):
 class FaissRemoveResponse(BaseModel):
     removed: int
     ntotal: int
+
+class FaissListResponse(BaseModel):
+    dim: int
+    ntotal: int          # 전체 개수 (source에 따라 메모리 or 디스크 기준)
+    ids: List[int]       # 페이징된 id 목록
+    source: Literal["memory", "disk"]
