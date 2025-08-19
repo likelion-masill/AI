@@ -1,8 +1,10 @@
-# app/schemas/common.py
-from pydantic import BaseModel
-from typing import Any, Optional
+# app/schemas/common_response.py (예시)
+from typing import Generic, Optional, TypeVar, Literal
+from pydantic.generics import GenericModel
 
-class CommonResponse(BaseModel):
-    status: str  # "success" / "error"
+T = TypeVar("T")
+
+class CommonResponse(GenericModel, Generic[T]):
+    status: Literal["success", "error"]
+    data: Optional[T] = None
     message: Optional[str] = None
-    data: Optional[Any] = None
