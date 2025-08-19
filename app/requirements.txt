@@ -6,3 +6,4 @@ scikit-learn
 openai>=1.40.0
 pydantic>=2
 python-dotenv
+faiss-cpu>=1.7.4
