@@ -158,3 +158,71 @@ class FaissService:
             return ids.astype("int64").tolist()
         except AttributeError:
             return []
+
+    def search_subset(
+            self,
+            query_embedding: List[float],
+            candidate_ids: List[int],
+            top_k: int = 10,
+            normalize_query: bool = True,
+    ) -> Dict:
+        """
+        candidate_ids 서브셋 내부에서만 쿼리 임베딩과의 유사도(내적/코사인)로 상위 top_k 랭킹 반환.
+        반환 형태: {"results": [{"post_id": int, "score": float}, ...]}
+        """
+        if not candidate_ids:
+            return {"results": []}
+        if len(query_embedding) != self.dim:
+            raise ValueError(f"query dim mismatch: got {len(query_embedding)}, expected {self.dim}")
+        if top_k <= 0:
+            return {"results": []}
+
+        q = np.asarray(query_embedding, dtype="float32").reshape(1, -1)
+        # 코사인(내적 기반)일 때 쿼리도 정규화 권장
+        if self.use_cosine and normalize_query:
+            q = self._normalize(q)
+        q = q.reshape(-1)  # (d,)
+
+        with self._lock:
+            if self.ntotal == 0:
+                return {"results": []}
+
+            # IndexIDMap2의 라벨(id) -> 내부 인덱스(pos) 매핑 구성
+            try:
+                id_map = faiss.vector_to_array(self._index.id_map)
+            except AttributeError:
+                # 일부 환경에서 속성 노출이 다를 수 있음
+                raise RuntimeError("IndexIDMap2.id_map not available on this build")
+
+            label_to_pos = {int(lbl): i for i, lbl in enumerate(id_map)}
+
+            # 후보 중 메모리에 존재하는 것만 모아 벡터 재구성
+            vecs = []
+            present_ids = []
+            for pid in candidate_ids:
+                pos = label_to_pos.get(int(pid))
+                if pos is None:
+                    continue
+                # 저장 당시 정규화되어 들어갔으므로 reconstruct 벡터도 정규화 상태( use_cosine=True )
+                v = self._index.reconstruct(pos)  # (d,)
+                vecs.append(v)
+                present_ids.append(int(pid))
+
+        if not present_ids:
+            return {"results": []}
+
+        M = np.stack(vecs, axis=0).astype("float32")  # (N, d)
+
+        # 코사인 = 내적 (정규화되어 있다면)
+        sims = M @ q  # (N,)
+
+        # 코사인 유사도 높은 순으로 정렬하여 상위 top_k 추출
+        k = int(min(top_k, sims.shape[0]))
+        top_idx = np.argpartition(-sims, kth=k - 1)[:k]
+        top_idx = top_idx[np.argsort(-sims[top_idx])]
+
+        results = [
+            {"post_id": int(present_ids[i]), "score": float(sims[i])}
+            for i in top_idx
+        ]
+        return {"results": results}

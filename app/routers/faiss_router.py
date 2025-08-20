@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Query, Body
 from typing import Literal
 from app.schemas.faiss_schema import (
     FaissUpsertRequest, FaissUpsertResponse, FaissReloadResponse,
-    FaissStatsResponse, FaissRemoveResponse, FaissListResponse
+    FaissStatsResponse, FaissRemoveResponse, FaissListResponse,
+    FaissSearchRequest, FaissSearchResponse
 )
 import json
 from app.services.faiss_service import FaissService
@@ -145,3 +146,26 @@ async def list_ids(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"list ids failed: {e}")
+
+
+@router.post("/search", response_model=CommonResponse[FaissSearchResponse], tags=["faiss"])
+async def search_subset(req: FaissSearchRequest, svc: FaissService = Depends(get_faiss)):
+    """
+    후보 ID 서브셋 안에서만 코사인 유사도(또는 내적)로 상위 top_k를 반환.
+    - req.query_embedding : 쿼리 임베딩
+    - req.candidate_ids   : 슬롯 필터로 걸러진 후보 post_id들
+    - req.top_k           : 상위 개수
+    - req.normalize       : 쿼리 벡터 L2 정규화 여부 (use_cosine=True일 때 권장 True)
+    """
+    try:
+        result = svc.search_subset(
+            query_embedding=req.query_embedding,
+            candidate_ids=req.candidate_ids,
+            top_k=req.top_k,
+            normalize_query=req.normalize,
+        )
+        return CommonResponse(status="success", data=FaissSearchResponse(**result))
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"search failed: {e}")
