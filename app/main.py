@@ -5,7 +5,9 @@ from app.routers.health_router import router as health_router
 from app.routers.faiss_router import router as faiss_router
 from app.services.faiss_service import FaissService
 from app.config import DEFAULT_EMBED_DIM, FAISS_INDEX_PATH
+from app.logging_config import setup_logging
 
+setup_logging()
 def create_app() -> FastAPI:
     app = FastAPI(title="masill AI API", version="0.1.0")
 

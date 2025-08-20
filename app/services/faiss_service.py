@@ -189,23 +189,22 @@ class FaissService:
         with self._lock:
             if self.ntotal == 0:
                 return {"total": 0, "results": []}
-
             try:
-                id_map = faiss.vector_to_array(self._index.id_map)
+                id_arr = faiss.vector_to_array(self._index.id_map)  # numpy array of ids
             except AttributeError:
                 raise RuntimeError("IndexIDMap2.id_map not available on this build")
 
-            label_to_pos = {int(lbl): i for i, lbl in enumerate(id_map)}
+            id_set = set(int(x) for x in id_arr)
 
             vecs = []
             present_ids = []
             for pid in candidate_ids:
-                pos = label_to_pos.get(int(pid))
-                if pos is None:
+                pid = int(pid)
+                if pid not in id_set:
                     continue
-                v = self._index.reconstruct(pos)  # (d,)
+                v = self._index.reconstruct(pid)  # (d,)
                 vecs.append(v)
-                present_ids.append(int(pid))
+                present_ids.append(pid)
 
         if not present_ids:
             return {"total": 0, "results": []}

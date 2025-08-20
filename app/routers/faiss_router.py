@@ -5,11 +5,14 @@ from app.schemas.faiss_schema import (
     FaissStatsResponse, FaissRemoveResponse, FaissListResponse,
     FaissSearchRequest, FaissSearchResponse
 )
+import logging
+
 import json
 from app.services.faiss_service import FaissService
 from app.schemas.common_response import CommonResponse
 
 router = APIRouter()
+log = logging.getLogger("app.faiss")
 
 def get_faiss(request: Request) -> FaissService:
     svc = getattr(request.app.state, "faiss", None)
@@ -168,4 +171,5 @@ async def search_subset(req: FaissSearchRequest, svc: FaissService = Depends(get
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"search failed: {e}")
+        log.exception("Internal error on /faiss/search req=%s", req.model_dump(by_alias=True))
+        raise HTTPException(status_code=500, detail="search failed")
