@@ -46,4 +46,5 @@ class FaissSearchItem(BaseModel):
     score: float
 
 class FaissSearchResponse(BaseModel):
+    total: int
     results: List[FaissSearchItem]
