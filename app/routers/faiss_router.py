@@ -155,21 +155,33 @@ async def list_ids(
 async def search_subset(req: FaissSearchRequest, svc: FaissService = Depends(get_faiss)):
     """
     후보 ID 서브셋 안에서만 코사인 유사도(또는 내적)로 상위 top_k를 반환.
-    - req.query_embedding : 쿼리 임베딩
-    - req.candidate_ids   : 슬롯 필터로 걸러진 후보 post_id들
-    - req.top_k           : 상위 개수
-    - req.normalize       : 쿼리 벡터 L2 정규화 여부 (use_cosine=True일 때 권장 True)
     """
     try:
+        print(f"[API] /faiss/search called "
+              f"top_k={req.top_k} normalize={req.normalize} "
+              f"embedding_len={len(req.query_embedding) if req.query_embedding else 0} "
+              f"candidates={len(req.candidate_ids) if req.candidate_ids else 0}",
+              flush=True)
+
         result = svc.search_subset(
             query_embedding=req.query_embedding,
             candidate_ids=req.candidate_ids,
             top_k=req.top_k,
             normalize_query=req.normalize,
         )
+
+        print(f"[API] /faiss/search done "
+              f"total={result.get('total')} "
+              f"k={len(result.get('results', []))} "
+              f"first={result['results'][0] if result.get('results') else None}",
+              flush=True)
+
         return CommonResponse(status="success", data=FaissSearchResponse(**result))
+
     except ValueError as ve:
+        print(f"[API] /faiss/search ValueError: {ve}", flush=True)
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
+        print(f"[API] /faiss/search Exception: {e}", flush=True)
         log.exception("Internal error on /faiss/search req=%s", req.model_dump(by_alias=True))
-        raise HTTPException(status_code=500, detail="search failed")
+        raise HTTPException(status_code=500, detail="internal error")
