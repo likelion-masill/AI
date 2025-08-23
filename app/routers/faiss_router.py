@@ -157,11 +157,10 @@ async def search_subset(req: FaissSearchRequest, svc: FaissService = Depends(get
     후보 ID 서브셋 안에서만 코사인 유사도(또는 내적)로 상위 top_k를 반환.
     """
     try:
-        print(f"[API] /faiss/search called "
-              f"top_k={req.top_k} normalize={req.normalize} "
-              f"embedding_len={len(req.query_embedding) if req.query_embedding else 0} "
-              f"candidates={len(req.candidate_ids) if req.candidate_ids else 0}",
-              flush=True)
+        log.info(f"[API] /faiss/search called "
+                 f"top_k={req.top_k} normalize={req.normalize} "
+                 f"embedding_len={len(req.query_embedding) if req.query_embedding else 0} "
+                 f"candidates={len(req.candidate_ids) if req.candidate_ids else 0}")
 
         result = svc.search_subset(
             query_embedding=req.query_embedding,
