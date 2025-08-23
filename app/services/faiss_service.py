@@ -179,10 +179,15 @@ class FaissService:
           }
         """
         if not candidate_ids:
+            print("[DEBUG] empty candidate_ids", flush=True)
             return {"total": 0, "results": []}
+
         if len(query_embedding) != self.dim:
-            raise ValueError(f"query dim mismatch: got {len(query_embedding)}, expected {self.dim}")
+            print(f"[DEBUG] dim mismatch got={len(query_embedding)} expected={self.dim}", flush=True)
+            raise ValueError(...)
+
         if top_k <= 0:
+            print(f"[DEBUG] top_k <= 0 (top_k={top_k})", flush=True)
             return {"total": 0, "results": []}
 
         q = np.asarray(query_embedding, dtype="float32").reshape(1, -1)
