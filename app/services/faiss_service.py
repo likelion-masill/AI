@@ -6,7 +6,8 @@ import numpy as np
 import threading
 import tempfile
 from typing import Iterable, Tuple, List, Dict, Optional
-
+import logging
+log = logging.getLogger("app.faiss")
 
 class FaissService:
     """
@@ -178,70 +179,85 @@ class FaissService:
             "results": [{"post_id": int, "score": float}, ...]
           }
         """
+        log.info(f"[SUBSET] start top_k=%s tau_abs=%.3f delta_margin=%.3f normalize=%s dim=%s "
+                 f"candidates=%s",
+                 top_k, tau_abs, delta_margin, normalize_query, self.dim, len(candidate_ids))
+
         if not candidate_ids:
-            print("[DEBUG] empty candidate_ids", flush=True)
+            log.info("[SUBSET] empty candidate_ids")
             return {"total": 0, "results": []}
 
         if len(query_embedding) != self.dim:
-            print(f"[DEBUG] dim mismatch got={len(query_embedding)} expected={self.dim}", flush=True)
-            raise ValueError(...)
+            log.info("[SUBSET] dim mismatch got=%s expected=%s", len(query_embedding), self.dim)
+            raise ValueError(f"query dim mismatch: got {len(query_embedding)}, expected {self.dim}")
 
         if top_k <= 0:
-            print(f"[DEBUG] top_k <= 0 (top_k={top_k})", flush=True)
+            log.info("[SUBSET] top_k <= 0 (top_k=%s)", top_k)
             return {"total": 0, "results": []}
 
         q = np.asarray(query_embedding, dtype="float32").reshape(1, -1)
         if self.use_cosine and normalize_query:
             q = self._normalize(q)
+            log.info("[SUBSET] query normalized (use_cosine=%s)", self.use_cosine)
         q = q.reshape(-1)  # (d,)
 
         with self._lock:
             if self.ntotal == 0:
+                log.info("[SUBSET] index empty (ntotal=0)")
                 return {"total": 0, "results": []}
             try:
                 id_arr = faiss.vector_to_array(self._index.id_map)  # numpy array of ids
             except AttributeError:
+                log.exception("[SUBSET] IndexIDMap2.id_map not available on this build")
                 raise RuntimeError("IndexIDMap2.id_map not available on this build")
 
             id_set = set(int(x) for x in id_arr)
+            log.info("[SUBSET] index_state ntotal=%s idmap_size=%s", int(self.ntotal), len(id_set))
 
-            vecs = []
-            present_ids = []
-            print(f"[DEBUG] 입력 candidate_ids 개수: {len(candidate_ids)}")
-            for id in candidate_ids:
-                print(f"[DEBUG] id : {id}")
-
+            vecs, present_ids = [], []
+            miss = 0
+            log.info("[SUBSET] input candidate_ids=%s", len(candidate_ids))
             for pid in candidate_ids:
-                pid = int(pid)
-                if pid not in id_set:
+                ipid = int(pid)
+                if ipid not in id_set:
+                    miss += 1
                     continue
-                v = self._index.reconstruct(pid)  # (d,)
+                v = self._index.reconstruct(ipid)  # (d,)
                 vecs.append(v)
-                present_ids.append(pid)
-            print(f"[DEBUG] 실제 인덱스에 존재하는 id 개수: {len(present_ids)}")
+                present_ids.append(ipid)
+            log.info("[SUBSET] present=%s missing=%s", len(present_ids), miss)
 
         if not present_ids:
+            log.info("[SUBSET] none of candidates present in index")
             return {"total": 0, "results": []}
 
         # 유사도 계산
         M = np.stack(vecs, axis=0).astype("float32")  # (N, d)
         sims = M @ q  # (N,)
+        total_before = len(present_ids)
+        log.info("[SUBSET] sims stats min=%.4f p50=%.4f p75=%.4f max=%.4f",
+                 float(np.min(sims)),
+                 float(np.percentile(sims, 50)),
+                 float(np.percentile(sims, 75)),
+                 float(np.max(sims)))
 
-        total_before_filter = len(present_ids)
-
-        # --- (1) 절대 임계값 필터 ---
+        # (1) 절대 임계값 필터
         keep_abs = sims >= float(tau_abs)
-        if not np.any(keep_abs):
-            # 모두 컷나면 상위 1개는 관용적으로 통과 (추천 공백 방지)
+        kept_cnt = int(np.count_nonzero(keep_abs))
+        log.info("[SUBSET] abs_threshold tau_abs=%.3f kept=%s", tau_abs, kept_cnt)
+
+        if kept_cnt == 0:
+            # 모두 컷 → 상위 1개 관용 통과
             top_idx_all = int(np.argmax(sims))
             kept_ids = np.array([present_ids[top_idx_all]])
             kept_sims = np.array([float(sims[top_idx_all])], dtype="float32")
+            log.info("[SUBSET] abs_fallback id=%s score=%.4f",
+                     int(kept_ids[0]), float(kept_sims[0]))
         else:
             kept_ids = np.array(present_ids, dtype=np.int64)[keep_abs]
             kept_sims = sims[keep_abs]
 
-        # --- (2) 상대 마진 필터 (상위 그룹 평균 대비 Δ 허용) ---
-        # 상위 5개(또는 그 미만)의 평균을 상위 평균으로 사용
+        # (2) 상대 마진 필터 (상위 평균 대비 Δ)
         order_tmp = np.argsort(-kept_sims)
         sims_sorted = kept_sims[order_tmp]
         ids_sorted = kept_ids[order_tmp]
@@ -251,22 +267,35 @@ class FaissService:
         thresh = top_mean - float(delta_margin)
 
         rel_keep = sims_sorted >= thresh
+        kept_after_margin = int(np.count_nonzero(rel_keep))
+        log.info("[SUBSET] relative_margin top_mean=%.4f delta=%.4f rel_thresh=%.4f kept=%s "
+                 "first5=%s",
+                 top_mean, delta_margin, thresh, kept_after_margin,
+                 [float(x) for x in sims_sorted[:min(5, sims_sorted.shape[0])]])
+
         sims_sorted = sims_sorted[rel_keep]
         ids_sorted = ids_sorted[rel_keep]
 
         if ids_sorted.size == 0:
-            # 혹시라도 비는 경우, 절대컷 통과 중 최상위 1개만 반환
+            # 혹시 비면 절대컷 통과 중 최상위 1개만
             top_idx_only = int(np.argmax(kept_sims))
             ids_sorted = np.array([kept_ids[top_idx_only]])
             sims_sorted = np.array([float(kept_sims[top_idx_only])], dtype="float32")
+            log.info("[SUBSET] margin_fallback id=%s score=%.4f",
+                     int(ids_sorted[0]), float(sims_sorted[0]))
 
-        # --- (3) 최종 top-k 선택 ---
+        # (3) 최종 top-k 선택
         k = int(min(top_k, ids_sorted.shape[0]))
         final_ids = ids_sorted[:k]
         final_sims = sims_sorted[:k]
+
+        log.info("[SUBSET] final k=%s ids=%s scores=%s",
+                 k,
+                 [int(x) for x in final_ids.tolist()],
+                 [float(x) for x in final_sims.tolist()])
 
         results = [
             {"post_id": int(pid), "score": float(sc)}
             for pid, sc in zip(final_ids.tolist(), final_sims.tolist())
         ]
-        return {"total": int(total_before_filter), "results": results}
+        return {"total": int(total_before), "results": results}
