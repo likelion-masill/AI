@@ -165,12 +165,16 @@ class FaissService:
             candidate_ids: List[int],
             top_k: int = 10,
             normalize_query: bool = True,
+            # 추가된 하이퍼파라미터
+            tau_abs: float = 0.30,  # 최소 점수 임계값(코사인)
+            delta_margin: float = 0.04,  # 상대 마진(상위 평균 대비 허용 하락폭)
     ) -> Dict:
         """
         candidate_ids 서브셋 내부에서만 쿼리 임베딩과의 유사도(내적/코사인)로 상위 top_k 랭킹 반환.
-        반환 형태:
+        필터 순서: 절대 임계값(τ_abs) → 상대 마진(Δ) → top-k.
+        반환:
           {
-            "total": <int>,   # present_ids 개수 (top_k 자르기 전)
+            "total": <int>,   # present_ids 개수 (필터 전, top_k 자르기 전)
             "results": [{"post_id": int, "score": float}, ...]
           }
         """
@@ -198,6 +202,10 @@ class FaissService:
 
             vecs = []
             present_ids = []
+            print(f"[DEBUG] 입력 candidate_ids 개수: {len(candidate_ids)}")
+            for id in candidate_ids:
+                print(f"[DEBUG] id : {id}")
+
             for pid in candidate_ids:
                 pid = int(pid)
                 if pid not in id_set:
@@ -205,19 +213,55 @@ class FaissService:
                 v = self._index.reconstruct(pid)  # (d,)
                 vecs.append(v)
                 present_ids.append(pid)
+            print(f"[DEBUG] 실제 인덱스에 존재하는 id 개수: {len(present_ids)}")
 
         if not present_ids:
             return {"total": 0, "results": []}
 
+        # 유사도 계산
         M = np.stack(vecs, axis=0).astype("float32")  # (N, d)
         sims = M @ q  # (N,)
 
-        k = int(min(top_k, sims.shape[0]))
-        top_idx = np.argpartition(-sims, kth=k - 1)[:k]
-        top_idx = top_idx[np.argsort(-sims[top_idx])]
+        total_before_filter = len(present_ids)
+
+        # --- (1) 절대 임계값 필터 ---
+        keep_abs = sims >= float(tau_abs)
+        if not np.any(keep_abs):
+            # 모두 컷나면 상위 1개는 관용적으로 통과 (추천 공백 방지)
+            top_idx_all = int(np.argmax(sims))
+            kept_ids = np.array([present_ids[top_idx_all]])
+            kept_sims = np.array([float(sims[top_idx_all])], dtype="float32")
+        else:
+            kept_ids = np.array(present_ids, dtype=np.int64)[keep_abs]
+            kept_sims = sims[keep_abs]
+
+        # --- (2) 상대 마진 필터 (상위 그룹 평균 대비 Δ 허용) ---
+        # 상위 5개(또는 그 미만)의 평균을 상위 평균으로 사용
+        order_tmp = np.argsort(-kept_sims)
+        sims_sorted = kept_sims[order_tmp]
+        ids_sorted = kept_ids[order_tmp]
+
+        top_n = min(5, sims_sorted.shape[0])
+        top_mean = float(sims_sorted[:top_n].mean())
+        thresh = top_mean - float(delta_margin)
+
+        rel_keep = sims_sorted >= thresh
+        sims_sorted = sims_sorted[rel_keep]
+        ids_sorted = ids_sorted[rel_keep]
+
+        if ids_sorted.size == 0:
+            # 혹시라도 비는 경우, 절대컷 통과 중 최상위 1개만 반환
+            top_idx_only = int(np.argmax(kept_sims))
+            ids_sorted = np.array([kept_ids[top_idx_only]])
+            sims_sorted = np.array([float(kept_sims[top_idx_only])], dtype="float32")
+
+        # --- (3) 최종 top-k 선택 ---
+        k = int(min(top_k, ids_sorted.shape[0]))
+        final_ids = ids_sorted[:k]
+        final_sims = sims_sorted[:k]
 
         results = [
-            {"post_id": int(present_ids[i]), "score": float(sims[i])}
-            for i in top_idx
+            {"post_id": int(pid), "score": float(sc)}
+            for pid, sc in zip(final_ids.tolist(), final_sims.tolist())
         ]
-        return {"total": len(present_ids), "results": results}
+        return {"total": int(total_before_filter), "results": results}
