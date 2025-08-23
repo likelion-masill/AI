@@ -299,3 +299,67 @@ class FaissService:
             for pid, sc in zip(final_ids.tolist(), final_sims.tolist())
         ]
         return {"total": int(total_before), "results": results}
+
+
+    def ai_recommend(
+            self,
+            query_embedding: List[float],
+            candidate_ids: List[int],
+            top_k: int = 10,
+            normalize_query: bool = True,
+    ) -> Dict:
+        """
+        candidate_ids 서브셋 내부에서만 쿼리 임베딩과의 유사도(내적/코사인)로 상위 top_k 랭킹 반환.
+        반환 형태:
+          {
+            "total": <int>,   # present_ids 개수 (top_k 자르기 전)
+            "results": [{"post_id": int, "score": float}, ...]
+          }
+        """
+        if not candidate_ids:
+            return {"total": 0, "results": []}
+        if len(query_embedding) != self.dim:
+            raise ValueError(f"query dim mismatch: got {len(query_embedding)}, expected {self.dim}")
+        if top_k <= 0:
+            return {"total": 0, "results": []}
+
+        q = np.asarray(query_embedding, dtype="float32").reshape(1, -1)
+        if self.use_cosine and normalize_query:
+            q = self._normalize(q)
+        q = q.reshape(-1)  # (d,)
+
+        with self._lock:
+            if self.ntotal == 0:
+                return {"total": 0, "results": []}
+            try:
+                id_arr = faiss.vector_to_array(self._index.id_map)  # numpy array of ids
+            except AttributeError:
+                raise RuntimeError("IndexIDMap2.id_map not available on this build")
+
+            id_set = set(int(x) for x in id_arr)
+
+            vecs = []
+            present_ids = []
+            for pid in candidate_ids:
+                pid = int(pid)
+                if pid not in id_set:
+                    continue
+                v = self._index.reconstruct(pid)  # (d,)
+                vecs.append(v)
+                present_ids.append(pid)
+
+        if not present_ids:
+            return {"total": 0, "results": []}
+
+        M = np.stack(vecs, axis=0).astype("float32")  # (N, d)
+        sims = M @ q  # (N,)
+
+        k = int(min(top_k, sims.shape[0]))
+        top_idx = np.argpartition(-sims, kth=k - 1)[:k]
+        top_idx = top_idx[np.argsort(-sims[top_idx])]
+
+        results = [
+            {"post_id": int(present_ids[i]), "score": float(sims[i])}
+            for i in top_idx
+        ]
+        return {"total": len(present_ids), "results": results}

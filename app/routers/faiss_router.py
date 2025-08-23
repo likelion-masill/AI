@@ -184,3 +184,37 @@ async def search_subset(req: FaissSearchRequest, svc: FaissService = Depends(get
         print(f"[API] /faiss/search Exception: {e}", flush=True)
         log.exception("Internal error on /faiss/search req=%s", req.model_dump(by_alias=True))
         raise HTTPException(status_code=500, detail="internal error")
+
+@router.post("/ai-recommend", response_model=CommonResponse[FaissSearchResponse], tags=["faiss"])
+async def recommend_subset(req: FaissSearchRequest, svc: FaissService = Depends(get_faiss)):
+    """
+    후보 ID 서브셋 안에서만 코사인 유사도(또는 내적)로 상위 top_k를 반환.
+    """
+    try:
+        log.info(f"[API] /faiss/ai-recommend called "
+                 f"top_k={req.top_k} normalize={req.normalize} "
+                 f"embedding_len={len(req.query_embedding) if req.query_embedding else 0} "
+                 f"candidates={len(req.candidate_ids) if req.candidate_ids else 0}")
+
+        result = svc.ai_recommend(
+            query_embedding=req.query_embedding,
+            candidate_ids=req.candidate_ids,
+            top_k=req.top_k,
+            normalize_query=req.normalize,
+        )
+
+        print(f"[API] /faiss/ai-recommend done "
+              f"total={result.get('total')} "
+              f"k={len(result.get('results', []))} "
+              f"first={result['results'][0] if result.get('results') else None}",
+              flush=True)
+
+        return CommonResponse(status="success", data=FaissSearchResponse(**result))
+
+    except ValueError as ve:
+        print(f"[API] /faiss/ai-recommend ValueError: {ve}", flush=True)
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        print(f"[API] /faiss/ai-recommend Exception: {e}", flush=True)
+        log.exception("Internal error on /faiss/ai-recommend req=%s", req.model_dump(by_alias=True))
+        raise HTTPException(status_code=500, detail="internal error")
