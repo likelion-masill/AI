@@ -6,6 +6,8 @@ import networkx as nx
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from openai import OpenAI
+import logging
+log = logging.getLogger("app.faiss")
 
 # ---------- OpenAI 클라이언트 ----------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -25,26 +27,36 @@ def sent_tokenize_ko(text: str):
 # top_k : 추출 요약 시 뽑을 문장 개수
 # min_len : 요약 문장의 최소 길이
 def textrank_tfidf(text: str, top_k: int = 5, min_len: int = 10) -> str:
+    log.info("[TextRank] 원본 텍스트 길이: %d", len(text))
+
     # 한국어 문장 분할
     sents = sent_tokenize_ko(text)
+    log.info("[TextRank] 분리된 문장 수: %d", len(sents))
+
     # 문장 개수가 tok_k 이하인 경우, 그냥 원문 반환
     if len(sents) <= top_k:
+        log.info("[TextRank] 문장 수가 %d 이하 → 원문 반환", top_k)
         return " ".join(sents)
 
     # TF-IDF기반 문장 벡터화
     vec = TfidfVectorizer(max_df=0.9, min_df=1, ngram_range=(1, 2))
     X = vec.fit_transform(sents)
+    log.info("[TextRank] TF-IDF 행렬 크기: %s", X.shape)
+
 
     # TF-IDF 행렬을 기반으로 코사인 유사도 계산
     sim = cosine_similarity(X)
     np.fill_diagonal(sim, 0.0)
 
+
     # Pagerank 알고리즘을 사용하여 문장 중요도 계산
     G = nx.from_numpy_array(sim)
     scores = nx.pagerank(G)
+
     # 중요도 점수를 기준으로 문장 정렬 후 상위 top_k개 선택
     ranked = sorted(range(len(sents)), key=lambda i: scores[i], reverse=True)
     chosen = sorted([i for i in ranked if len(sents[i]) >= min_len][:top_k])
+    log.info("[TextRank][성공] 최종 선택 문장 인덱스: %s", chosen)
 
     return " ".join(sents[i] for i in chosen)
 
@@ -70,16 +82,20 @@ def refine_gpt(draft: str, temperature: float = 0.3, max_tokens: int = 300) -> s
         "[텍스트]\n{draft}"
     )
 
+    try:
+        resp = client.responses.create(
+            model="gpt-4o-mini",
+            input=[
+                {"role": "system", "content": SYSTEM},
+                {"role": "user", "content": USER_TMPL.format(draft=draft)},
+            ],
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        )
+        result = resp.output_text.strip()
+        log.info("[RefineGPT] 요약 성공 (결과 길이=%d)", len(result))
+        return result
 
-    resp = client.responses.create(
-        model="gpt-4o-mini",
-        input=[
-            # 모델의 행동 지침을 지정
-            {"role": "system", "content": SYSTEM},
-            # 실제 사용자가 하는 요청
-            {"role": "user", "content": USER_TMPL.format(draft=draft)},
-        ],
-        temperature=temperature,
-        max_output_tokens=max_tokens,
-    )
-    return resp.output_text.strip()
+    except Exception as e:
+        log.error("[RefineGPT] OpenAI 호출 실패: %s", e, exc_info=True)
+        raise

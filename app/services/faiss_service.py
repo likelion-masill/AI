@@ -69,8 +69,10 @@ class FaissService:
     # ---------- mutating ops ----------
     # 이미 같은 postId 있으면 교체, 없으면 새로 삽입.
     def upsert(self, post_id: int, embedding: List[float]) -> Dict:
+        log.info("[Upsert] 요청 수신 (post_id=%d, embedding_dim=%d)", post_id, len(embedding))
         # 임베딩 차원 검증
         if len(embedding) != self.dim:
+            log.error("[Upsert] dim mismatch: got %d, expected %d", len(embedding), self.dim)
             raise ValueError(f"dim mismatch: got {len(embedding)}, expected {self.dim}")
 
         # 입력 데이터 전처리
@@ -82,13 +84,16 @@ class FaissService:
             # postId가 이미 존재한다면 제거 후 새로 추가
             self._index.remove_ids(ids)
             self._index.add_with_ids(x, ids)
+            log.info("[Upsert] post_id=%d (현재 총 개수=%d)", post_id, self.ntotal)
             if self.autosave:
                 self.save_index()
             return {"upserted": 1, "ntotal": self.ntotal}
 
     def remove(self, post_id: int) -> int:
+        log.info("[Remove] 요청 수신 (post_id=%d)", post_id)
         with self._lock:
             n = int(self._index.remove_ids(np.asarray([post_id], dtype="int64")))
+            log.info("[Remove] post_id=%d (삭제된 개수=%d, 현재 총 개수=%d)", post_id, n, self.ntotal)
             if self.autosave:
                 self.save_index()
             return n
@@ -179,44 +184,44 @@ class FaissService:
             "results": [{"post_id": int, "score": float}, ...]
           }
         """
-        log.info(f"[SUBSET] start top_k=%s tau_abs=%.3f delta_margin=%.3f normalize=%s dim=%s "
-                 f"candidates=%s",
-                 top_k, tau_abs, delta_margin, normalize_query, self.dim, len(candidate_ids))
+        log.info(f"[부분검색] 시작 top_k={top_k}, 절대임계값(tau_abs)={tau_abs:.3f}, "
+                 f"상대마진(delta)={delta_margin:.3f}, 정규화={normalize_query}, "
+                 f"차원={self.dim}, 후보군 개수={len(candidate_ids)}")
 
         if not candidate_ids:
-            log.info("[SUBSET] empty candidate_ids")
+            log.info("[부분검색] 후보군이 비어 있음")
             return {"total": 0, "results": []}
 
         if len(query_embedding) != self.dim:
-            log.info("[SUBSET] dim mismatch got=%s expected=%s", len(query_embedding), self.dim)
+            log.info("[부분검색] 차원 불일치: 입력=%s, 기대=%s", len(query_embedding), self.dim)
             raise ValueError(f"query dim mismatch: got {len(query_embedding)}, expected {self.dim}")
 
         if top_k <= 0:
-            log.info("[SUBSET] top_k <= 0 (top_k=%s)", top_k)
+            log.info("[부분검색] top_k가 0 이하 (top_k=%s)", top_k)
             return {"total": 0, "results": []}
 
         q = np.asarray(query_embedding, dtype="float32").reshape(1, -1)
         if self.use_cosine and normalize_query:
             q = self._normalize(q)
-            log.info("[SUBSET] query normalized (use_cosine=%s)", self.use_cosine)
+            log.info("[부분검색] 쿼리 벡터 정규화 완료 (use_cosine=%s)", self.use_cosine)
         q = q.reshape(-1)  # (d,)
 
         with self._lock:
             if self.ntotal == 0:
-                log.info("[SUBSET] index empty (ntotal=0)")
+                log.info("[부분검색] 인덱스가 비어 있음 (ntotal=0)")
                 return {"total": 0, "results": []}
             try:
                 id_arr = faiss.vector_to_array(self._index.id_map)  # numpy array of ids
             except AttributeError:
-                log.exception("[SUBSET] IndexIDMap2.id_map not available on this build")
+                log.exception("[부분검색] IndexIDMap2.id_map 속성을 사용할 수 없음")
                 raise RuntimeError("IndexIDMap2.id_map not available on this build")
 
             id_set = set(int(x) for x in id_arr)
-            log.info("[SUBSET] index_state ntotal=%s idmap_size=%s", int(self.ntotal), len(id_set))
+            log.info("[부분검색] 인덱스 상태: 총 벡터수=%s, idmap 크기=%s", int(self.ntotal), len(id_set))
 
             vecs, present_ids = [], []
             miss = 0
-            log.info("[SUBSET] input candidate_ids=%s", len(candidate_ids))
+            log.info("[부분검색] 입력된 후보군 개수=%s", len(candidate_ids))
             for pid in candidate_ids:
                 ipid = int(pid)
                 if ipid not in id_set:
@@ -225,17 +230,17 @@ class FaissService:
                 v = self._index.reconstruct(ipid)  # (d,)
                 vecs.append(v)
                 present_ids.append(ipid)
-            log.info("[SUBSET] present=%s missing=%s", len(present_ids), miss)
+            log.info("[부분검색] 인덱스에 존재하는 후보=%s, 누락=%s", len(present_ids), miss)
 
         if not present_ids:
-            log.info("[SUBSET] none of candidates present in index")
+            log.info("[부분검색] 후보군이 인덱스에 전혀 존재하지 않음")
             return {"total": 0, "results": []}
 
         # 유사도 계산
         M = np.stack(vecs, axis=0).astype("float32")  # (N, d)
         sims = M @ q  # (N,)
         total_before = len(present_ids)
-        log.info("[SUBSET] sims stats min=%.4f p50=%.4f p75=%.4f max=%.4f",
+        log.info("[부분검색] 유사도 통계: 최소=%.4f, 중앙값=%.4f, 상위25%%=%.4f, 최대=%.4f",
                  float(np.min(sims)),
                  float(np.percentile(sims, 50)),
                  float(np.percentile(sims, 75)),
@@ -244,14 +249,14 @@ class FaissService:
         # (1) 절대 임계값 필터
         keep_abs = sims >= float(tau_abs)
         kept_cnt = int(np.count_nonzero(keep_abs))
-        log.info("[SUBSET] abs_threshold tau_abs=%.3f kept=%s", tau_abs, kept_cnt)
+        log.info("[부분검색] 절대 임계값 적용 tau_abs=%.3f → 통과 개수=%s", tau_abs, kept_cnt)
 
         if kept_cnt == 0:
             # 모두 컷 → 상위 1개 관용 통과
             top_idx_all = int(np.argmax(sims))
             kept_ids = np.array([present_ids[top_idx_all]])
             kept_sims = np.array([float(sims[top_idx_all])], dtype="float32")
-            log.info("[SUBSET] abs_fallback id=%s score=%.4f",
+            log.info("[부분검색] 절대 임계값 통과 없음 → 최상위 1개 관용 통과 id=%s, 점수=%.4f",
                      int(kept_ids[0]), float(kept_sims[0]))
         else:
             kept_ids = np.array(present_ids, dtype=np.int64)[keep_abs]
@@ -268,8 +273,8 @@ class FaissService:
 
         rel_keep = sims_sorted >= thresh
         kept_after_margin = int(np.count_nonzero(rel_keep))
-        log.info("[SUBSET] relative_margin top_mean=%.4f delta=%.4f rel_thresh=%.4f kept=%s "
-                 "first5=%s",
+        log.info("[부분검색] 상대 마진 필터 top평균=%.4f, 마진=%.4f, 임계값=%.4f → 통과 개수=%s, "
+                 "상위5점수=%s",
                  top_mean, delta_margin, thresh, kept_after_margin,
                  [float(x) for x in sims_sorted[:min(5, sims_sorted.shape[0])]])
 
@@ -281,7 +286,7 @@ class FaissService:
             top_idx_only = int(np.argmax(kept_sims))
             ids_sorted = np.array([kept_ids[top_idx_only]])
             sims_sorted = np.array([float(kept_sims[top_idx_only])], dtype="float32")
-            log.info("[SUBSET] margin_fallback id=%s score=%.4f",
+            log.info("[부분검색] 상대 마진 통과 없음 → 절대 임계값 최상위 1개 선택 id=%s, 점수=%.4f",
                      int(ids_sorted[0]), float(sims_sorted[0]))
 
         # (3) 최종 top-k 선택
@@ -289,7 +294,7 @@ class FaissService:
         final_ids = ids_sorted[:k]
         final_sims = sims_sorted[:k]
 
-        log.info("[SUBSET] final k=%s ids=%s scores=%s",
+        log.info("[부분검색] 최종 선택 k=%s, ids=%s, 점수=%s",
                  k,
                  [int(x) for x in final_ids.tolist()],
                  [float(x) for x in final_sims.tolist()])
@@ -316,6 +321,9 @@ class FaissService:
             "results": [{"post_id": int, "score": float}, ...]
           }
         """
+        log.info("[AI Recommend] 요청 수신 (candidate_ids=%d, top_k=%d, normalize=%s)",
+                 len(candidate_ids), top_k, normalize_query)
+
         if not candidate_ids:
             return {"total": 0, "results": []}
         if len(query_embedding) != self.dim:
@@ -326,13 +334,16 @@ class FaissService:
         q = np.asarray(query_embedding, dtype="float32").reshape(1, -1)
         if self.use_cosine and normalize_query:
             q = self._normalize(q)
+            log.info("[AI Recommend] 쿼리 벡터 정규화 완료")
         q = q.reshape(-1)  # (d,)
 
         with self._lock:
             if self.ntotal == 0:
+                log.info("[AI Recommend] 인덱스 비어 있음 → 결과 0")
                 return {"total": 0, "results": []}
             try:
                 id_arr = faiss.vector_to_array(self._index.id_map)  # numpy array of ids
+                log.info("[AI Recommend] 인덱스에 등록된 id 수: %d", len(id_arr))
             except AttributeError:
                 raise RuntimeError("IndexIDMap2.id_map not available on this build")
 
@@ -349,7 +360,11 @@ class FaissService:
                 present_ids.append(pid)
 
         if not present_ids:
+            log.info("[AI Recommend] 후보군 교집합 없음 → 결과 0")
             return {"total": 0, "results": []}
+
+        log.info("[AI Recommend] 실제 검색 가능한 후보군 수: %d", len(present_ids))
+
 
         M = np.stack(vecs, axis=0).astype("float32")  # (N, d)
         sims = M @ q  # (N,)
@@ -362,4 +377,6 @@ class FaissService:
             {"post_id": int(present_ids[i]), "score": float(sims[i])}
             for i in top_idx
         ]
+        log.info("[AI Recommend] 최종 결과: total=%d, 반환=%d", len(present_ids), len(results))
+
         return {"total": len(present_ids), "results": results}
