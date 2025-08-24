@@ -172,8 +172,8 @@ class FaissService:
             top_k: int = 10,
             normalize_query: bool = True,
             # 추가된 하이퍼파라미터
-            tau_abs: float = 0.30,  # 최소 점수 임계값(코사인)
-            delta_margin: float = 0.04,  # 상대 마진(상위 평균 대비 허용 하락폭)
+            tau_abs: float = 0.22,  # 최소 점수 임계값(코사인)
+            delta_margin: float = 0.06,  # 상대 마진(상위 평균 대비 허용 하락폭)
     ) -> Dict:
         """
         candidate_ids 서브셋 내부에서만 쿼리 임베딩과의 유사도(내적/코사인)로 상위 top_k 랭킹 반환.
